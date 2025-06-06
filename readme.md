@@ -29,6 +29,52 @@ Beszel consists of two main components: the **hub** and the **agent**.
 - **Hub**: A web application built on [PocketBase](https://pocketbase.io/) that provides a dashboard for viewing and managing connected systems.
 - **Agent**: Runs on each system you want to monitor, creating a minimal SSH server to communicate system metrics to the hub.
 
+## Building Beszel
+
+To build Beszel from source, you'll need to have Go (version 1.20 or later recommended) installed on your system. The frontend assets for the Hub are typically built using Bun or npm, which will also be needed if you're not skipping the web UI build.
+
+You can build the components using the provided Makefile or standard `go build` commands.
+
+### Using Make
+
+The simplest way to build is using the `Makefile` located in the `beszel` directory:
+
+*   **Build both Hub and Agent:**
+    ```bash
+    make build
+    ```
+*   **Build only the Hub:**
+    ```bash
+    make build-hub
+    ```
+*   **Build only the Agent:**
+    ```bash
+    make build-agent
+    ```
+The compiled binaries will be placed in the `./build` directory within the `beszel` directory (e.g., `beszel/build/beszel_linux_amd64` and `beszel/build/beszel-agent_linux_amd64`).
+
+You can also specify the target operating system and architecture:
+```bash
+# Example for Windows amd64
+make OS=windows ARCH=amd64 build
+```
+
+### Using `go build`
+
+Alternatively, you can use standard `go build` commands from the root of the repository:
+
+*   **Build the Hub:**
+    ```bash
+    go build -o ./beszel/build/beszel_$(go env GOOS)_$(go env GOARCH) -ldflags "-w -s" ./beszel/cmd/hub
+    ```
+    *Note: This command skips building the web UI. For a complete Hub build including the UI, it's recommended to use `make build-hub` or ensure the UI is built separately first (see `make build-web-ui` target).*
+
+*   **Build the Agent:**
+    ```bash
+    go build -o ./beszel/build/beszel-agent_$(go env GOOS)_$(go env GOARCH) -ldflags "-w -s" ./beszel/cmd/agent
+    ```
+Replace `$(go env GOOS)` and `$(go env GOARCH)` with your target OS and architecture if cross-compiling, or let Go determine them automatically. The output directory `./beszel/build/` needs to exist or be created first.
+
 ## Getting started
 
 The [quick start guide](https://beszel.dev/guide/getting-started) and other documentation is available on our website, [beszel.dev](https://beszel.dev). You'll be up and running in a few minutes.

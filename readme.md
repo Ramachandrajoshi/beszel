@@ -75,6 +75,34 @@ Alternatively, you can use standard `go build` commands from the root of the rep
     ```
 Replace `$(go env GOOS)` and `$(go env GOARCH)` with your target OS and architecture if cross-compiling, or let Go determine them automatically. The output directory `./beszel/build/` needs to exist or be created first.
 
+### Running/Installing the Binaries
+
+Once you have built the Hub and Agent, you will find the binaries in the `./beszel/build/` directory (e.g., `beszel-hub_linux_amd64` and `beszel-agent_linux_amd64`).
+
+*   **Running Directly:**
+    You can run them directly from this location:
+    ```bash
+    # Example for the Hub
+    ./beszel/build/beszel_linux_amd64 serve
+    # Example for the Agent
+    ./beszel/build/beszel-agent_linux_amd64
+    ```
+    Remember to use the correct binary name for your OS and architecture. The Hub typically requires the `serve` command to start.
+
+*   **Installing (System-Wide Access):**
+    For easier access, you can move the binaries to a directory included in your system's `PATH`, such as `/usr/local/bin`:
+    ```bash
+    # Example for Linux/macOS
+    sudo mv ./beszel/build/beszel_linux_amd64 /usr/local/bin/beszel
+    sudo mv ./beszel/build/beszel-agent_linux_amd64 /usr/local/bin/beszel-agent
+    ```
+    After this, you can run them simply as `beszel serve` and `beszel-agent`.
+
+*   **Important Notes:**
+    *   **Hub Data:** The Beszel Hub stores its data (including SQLite database, settings, etc.) in a `pb_data` directory. When you run `beszel serve`, it will create this directory in the current working directory unless specified otherwise via command-line flags (refer to `beszel serve --help`).
+    *   **Agent Operation:** The Beszel Agent needs to run continuously to monitor a system. For production use, you'll typically want to run it as a system service (e.g., using systemd on Linux). Detailed instructions for setting up agents are available in the [official documentation](https://beszel.dev/guide/getting-started). The agent may also require appropriate permissions to access system metrics and Docker information.
+    *   **Configuration:** Both Hub and Agent can be configured using environment variables or command-line flags. Consult the documentation or use the `--help` flag for more details (e.g., `beszel serve --help`, `beszel-agent --help`).
+
 ## Getting started
 
 The [quick start guide](https://beszel.dev/guide/getting-started) and other documentation is available on our website, [beszel.dev](https://beszel.dev). You'll be up and running in a few minutes.

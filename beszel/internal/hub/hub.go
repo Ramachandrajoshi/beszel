@@ -277,30 +277,51 @@ func (h *Hub) registerApiRoutes(se *core.ServeEvent) error {
 		return err
 	}, apis.RequireAdminOrRecordAuth("systems")) // Protect route: only admin or authed user linked to system
 
-	se.Router.GET("/api/agent/:agentId/docker/containers/:containerId/logs", func(e *core.RequestEvent) error {
-		agentId := e.PathParam("agentId")
-		containerId := e.PathParam("containerId")
+	se.Router.GET("/api/docker/logs", func(e *core.RequestEvent) error {
+		agentId := e.QueryParam("agentId")
+		containerId := e.QueryParam("containerId")
 		if agentId == "" || containerId == "" {
-			return apis.NewBadRequestError("agentId and containerId are required", nil)
+			return apis.NewBadRequestError("agentId and containerId query parameters are required", nil)
 		}
 
-		info, _ := e.RequestInfo()
-		if info.Auth == nil {
-			return apis.NewForbiddenError("Forbidden", nil)
+		authRecord, _ := e.Get(apis.ContextAuthRecordKey).(*models.Record)
+		if authRecord == nil {
+			return apis.NewForbiddenError("Forbidden. Authentication required.", nil)
+		}
+
+		systemRec, err := h.App.Dao().FindRecordById("systems", agentId)
+		if err != nil || systemRec == nil {
+			return apis.NewNotFoundError("Agent system not found", err)
+		}
+
+		// Authorization check: admin or user linked to the system
+		if !authRecord.IsAdmin() {
+			userHasAccess := false
+			// Assuming 'users' is a multiple relation field in 'systems' collection
+			usersField, ok := systemRec.Get("users").([]string)
+			if ok {
+				for _, userId := range usersField {
+					if userId == authRecord.Id {
+						userHasAccess = true
+						break
+					}
+				}
+			}
+			if !userHasAccess {
+				return apis.NewForbiddenError("Access to this agent's logs is forbidden", nil)
+			}
 		}
 
 		system, ok := h.sm.Systems().GetOk(agentId)
 		if !ok || system == nil {
-			return apis.NewNotFoundError("Agent not found or not active", nil)
+			return apis.NewNotFoundError("Agent not found or not active in system manager", nil)
 		}
 
 		// Query parameters
 		since := e.QueryParam("since")
 		tail := e.QueryParam("tail")
-		follow := e.QueryParamBool("follow") // Default is false if not provided or parsing error
 
 		// Construct the command for the agent
-		// The agent needs to be programmed to handle this command and its parameters.
 		cmd := fmt.Sprintf("agent_cli get-docker-logs --id %s", containerId)
 		if since != "" {
 			cmd += fmt.Sprintf(" --since %s", shellEscape(since))
@@ -308,40 +329,17 @@ func (h *Hub) registerApiRoutes(se *core.ServeEvent) error {
 		if tail != "" {
 			cmd += fmt.Sprintf(" --tail %s", shellEscape(tail))
 		}
-		if follow {
-			cmd += " --follow"
-		}
 
 		e.Response.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		// TODO: Consider adding "Transfer-Encoding: chunked" if appropriate for long-lived streams,
-		// though PocketBase/echo might handle this.
 
-		// Hijack the response writer for streaming if necessary, or just use e.Response directly
-		// For simplicity with PocketBase's core.RequestEvent, we'll try direct streaming.
-		// If `follow` is true, this connection could be long-lived.
-		// Ensure client and any proxies support this.
-
-		// Set a long timeout if following logs, otherwise use a shorter one.
-		// This is a conceptual timeout for the overall request from the hub's perspective.
-		// The underlying SSH session also has timeouts.
-		// PocketBase's default server timeouts might also apply.
-		// For true long-lived streaming, a more complex setup might be needed (e.g. WebSockets or dedicated stream handling)
-
-		err := system.StreamCommand(cmd, e.Response)
+		err = system.StreamCommand(cmd, e.Response)
 		if err != nil {
-			// Don't write to response if headers already sent and stream started
-			// Check `e.Response.Committed` if available, or assume if err after stream it's too late.
-			// For now, log and potentially return an error if nothing has been written yet.
 			h.Logger().Error("Failed to stream docker logs from agent", "agentId", agentId, "containerId", containerId, "error", err)
-			// If headers not sent, can send an error
-			// if !e.Response.Committed { // Hypothetical check, PocketBase might not expose this directly
-			//	return apis.NewApiError(http.StatusInternalServerError, fmt.Sprintf("Failed to stream logs: %v", err), nil)
-			// }
 			// If streaming already started, error is returned to be logged by the framework
 			return fmt.Errorf("streaming error for %s/%s: %w", agentId, containerId, err)
 		}
 		return nil // Success
-	}, apis.RequireAdminOrRecordAuth("systems")) // Protect route
+	})
 
 	return nil
 }
@@ -349,6 +347,10 @@ func (h *Hub) registerApiRoutes(se *core.ServeEvent) error {
 // shellEscape a string for safe inclusion in a shell command.
 // This is a basic version; a more robust one might be needed depending on agent's shell.
 func shellEscape(s string) string {
+	// Ensure s is treated as a single argument, even if it contains spaces or special characters.
+	// The agent side must be prepared to parse this.
+	// Using simple single quotes for now, assuming the agent's argument parser handles it.
+	// A more robust solution might involve base64 encoding or more complex quoting if needed.
 	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }
 

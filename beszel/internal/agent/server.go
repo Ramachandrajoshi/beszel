@@ -176,7 +176,6 @@ func (a *Agent) handleGetDockerLogs(s ssh.Session, args []string) {
 	logFlags.SetOutput(s.Stderr()) // Send flag parsing errors to session stderr
 
 	var containerID, since, tail string
-	var follow bool
 
 	logFlags.StringVar(&containerID, "id", "", "Container ID (required)")
 	logFlags.StringVar(&since, "since", "", "Timestamp (e.g., YYYY-MM-DDTHH:MM:SSZ or seconds)")
@@ -186,20 +185,7 @@ func (a *Agent) handleGetDockerLogs(s ssh.Session, args []string) {
 	// For simplicity, let's check for "--follow" presence.
 	// A more robust solution might be custom parsing or a small helper for boolean flags without values.
 
-	// Manual parsing for --follow to support presence as true
-	followArgProvided := false
-	cleanedArgs := []string{}
-	for _, arg := range args {
-		if arg == "--follow" {
-			followArgProvided = true
-		} else {
-			cleanedArgs = append(cleanedArgs, arg)
-		}
-	}
-	follow = followArgProvided
-
-
-	if err := logFlags.Parse(cleanedArgs); err != nil {
+	if err := logFlags.Parse(args); err != nil {
 		slog.Error("Error parsing flags for get-docker-logs", "err", err)
 		// Error message already sent to s.Stderr() by logFlags.SetOutput
 		s.Exit(1)
@@ -214,8 +200,8 @@ func (a *Agent) handleGetDockerLogs(s ssh.Session, args []string) {
 		return
 	}
 
-	slog.Debug("Calling dockerManager.getContainerLogs", "id", containerID, "since", since, "tail", tail, "follow", follow)
-	logStream, err := a.dockerManager.getContainerLogs(containerID, since, tail, follow)
+	slog.Debug("Calling dockerManager.getContainerLogs", "id", containerID, "since", since, "tail", tail)
+	logStream, err := a.dockerManager.getContainerLogs(containerID, since, tail)
 	if err != nil {
 		slog.Error("Error getting container logs from dockerManager", "err", err, "id", containerID)
 		fmt.Fprintf(s.Stderr(), "Error getting container logs for %s: %v\n", containerID, err)
@@ -225,7 +211,6 @@ func (a *Agent) handleGetDockerLogs(s ssh.Session, args []string) {
 	defer logStream.Close()
 
 	// Copy the stream to the SSH session's stdout
-	// If follow is true, this could be a long-lived copy operation.
 	// The SSH library and client (Hub) must support this.
 	written, err := io.Copy(s, logStream)
 	if err != nil {

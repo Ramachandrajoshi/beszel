@@ -344,9 +344,8 @@ func getDockerHost() string {
 //   stderr=true
 //   since={since} (if since is not empty)
 //   tail={tail} (if tail is not empty)
-//   follow={follow}
 // The response body (which is an io.ReadCloser) should be returned directly.
-func (dm *dockerManager) getContainerLogs(containerID string, since string, tail string, follow bool) (io.ReadCloser, error) {
+func (dm *dockerManager) getContainerLogs(containerID string, since string, tail string) (io.ReadCloser, error) {
 	if dm.client == nil {
 		return nil, fmt.Errorf("docker client not initialized")
 	}
@@ -355,7 +354,6 @@ func (dm *dockerManager) getContainerLogs(containerID string, since string, tail
 	params := url.Values{}
 	params.Add("stdout", "true")
 	params.Add("stderr", "true")
-	params.Add("follow", fmt.Sprintf("%t", follow))
 
 	if since != "" {
 		params.Add("since", since)

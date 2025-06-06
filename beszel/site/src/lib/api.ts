@@ -27,7 +27,7 @@ export interface ApiContainerInfo {
   IdShort: string; // Derived field, first 12 chars of Id
 }
 
-const BASE_API_URL = '/api/agent'; // Adjust if your API proxy is different
+const BASE_API_URL = '/api'; // Adjust if your API proxy is different. Base for /docker/logs will be this.
 
 /**
  * Fetches the list of Docker containers for a given agent.
@@ -47,29 +47,31 @@ export async function getDockerContainers(agentId: string): Promise<ApiContainer
 }
 
 /**
- * Constructs the URL for streaming Docker container logs.
+ * Constructs the URL for fetching Docker container logs.
  * @param agentId The ID of the agent.
  * @param containerId The ID of the container.
- * @param params Optional parameters for log fetching.
- * @returns The URL string for the log stream.
+ * @param params Optional parameters for log fetching (since, tail).
+ * @returns The URL string for fetching logs.
  */
-export function getDockerContainerLogsStreamUrl(
+export function getDockerContainerLogsUrl(
   agentId: string,
   containerId: string,
-  params?: { since?: string; tail?: string; follow?: boolean }
+  params?: { since?: string; tail?: string }
 ): string {
   if (!agentId || !containerId) {
     throw new Error('Agent ID and Container ID are required');
   }
-  const url = new URL(`${window.location.origin}${BASE_API_URL}/${agentId}/docker/containers/${containerId}/logs`);
+  // Note: window.location.origin is used to ensure the path is absolute.
+  // BASE_API_URL is now just /api, and we append /docker/logs
+  const url = new URL(`${window.location.origin}${BASE_API_URL}/docker/logs`);
+  url.searchParams.append('agentId', agentId);
+  url.searchParams.append('containerId', containerId);
+
   if (params?.since) {
     url.searchParams.append('since', params.since);
   }
   if (params?.tail) {
     url.searchParams.append('tail', params.tail);
-  }
-  if (params?.follow !== undefined) {
-    url.searchParams.append('follow', String(params.follow));
   }
   return url.toString();
 }

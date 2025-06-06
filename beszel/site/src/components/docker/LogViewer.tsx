@@ -2,11 +2,11 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { $router } from '@/components/router'; // Using Nanostores router
 import { useStore } from '@nanostores/react'; // For reactive updates to params
-import { getDockerContainerLogsStreamUrl } from '@/lib/api';
+import { getDockerContainerLogsUrl } from '@/lib/api'; // Updated import
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Switch } from '@/components/ui/switch'; // For the follow toggle
+// Switch is removed as 'follow' functionality is gone
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 
 const LogViewer: React.FC = () => {
@@ -17,32 +17,23 @@ const LogViewer: React.FC = () => {
   const [logs, setLogs] = useState<string[]>([]);
   const [since, setSince] = useState<string>(''); // e.g., "10m", "1h", specific timestamp
   const [tail, setTail] = useState<string>('100'); // e.g., "100", "all"
-  const [follow, setFollow] = useState<boolean>(false);
+  // follow state is removed
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
   const logsEndRef = useRef<HTMLDivElement>(null);
-  const abortControllerRef = useRef<AbortController | null>(null);
+  // abortControllerRef is removed
 
   const scrollToBottom = () => {
     logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
+  // Scroll to bottom when logs change
   useEffect(() => {
-    if (follow) {
-      scrollToBottom();
-    }
-  }, [logs, follow]);
+    scrollToBottom();
+  }, [logs]);
 
-  // Cleanup function to abort fetch if component unmounts or follow changes
-  useEffect(() => {
-    return () => {
-      if (abortControllerRef.current) {
-        abortControllerRef.current.abort();
-      }
-    };
-  }, []);
-
+  // Cleanup effect for aborting is removed as we are not using AbortController in the same way
 
   const fetchLogs = useCallback(async () => {
     if (!agentId || !containerId) {
@@ -50,83 +41,45 @@ const LogViewer: React.FC = () => {
       return;
     }
 
-    // Abort any ongoing fetch
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-    }
-    abortControllerRef.current = new AbortController();
-    const signal = abortControllerRef.current.signal;
+    // AbortController logic removed
 
     setIsLoading(true);
     setError(null);
     setLogs([]); // Clear previous logs
 
-    const streamUrl = getDockerContainerLogsStreamUrl(agentId, containerId, {
+    const logsUrl = getDockerContainerLogsUrl(agentId, containerId, { // Updated function call
       since: since || undefined, // Send only if not empty
       tail: tail || undefined,   // Send only if not empty
-      follow,
+      // follow parameter is removed
     });
 
     try {
-      const response = await fetch(streamUrl, { signal });
+      const response = await fetch(logsUrl); // Signal is removed
       if (!response.ok) {
         const errorText = await response.text();
         throw new Error(`Failed to fetch logs: ${response.status} ${errorText}`);
       }
 
-      if (!response.body) {
-        throw new Error('Response body is null');
-      }
+      // Process logs as a single text blob
+      const text = await response.text();
+      const lines = text.split('\n');
+      setLogs(lines);
 
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-
-      let buffer = '';
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) {
-          if (buffer.length > 0) { // Process any remaining buffer
-            setLogs(prev => [...prev, buffer]);
-          }
-          break;
-        }
-        buffer += decoder.decode(value, { stream: true });
-
-        // Process line by line
-        let newlineIndex;
-        while ((newlineIndex = buffer.indexOf('\n')) >= 0) {
-          const line = buffer.substring(0, newlineIndex);
-          setLogs(prev => [...prev, line]);
-          buffer = buffer.substring(newlineIndex + 1);
-        }
-        // If not following, and we have processed the initial chunk, we might stop early
-        // For simplicity, this loop continues until 'done' or aborted
-      }
+      // Removed while loop and TextDecoder logic
     } catch (err) {
-      if (err instanceof Error && err.name !== 'AbortError') {
+      // Simplified error handling as AbortError is no longer expected from our controller
+      if (err instanceof Error) {
         setError(err.message);
-      } else if (err instanceof Error && err.name === 'AbortError') {
-        setError(null); // Clear error if it's a user-initiated abort
-        slog.Debug('Log fetching aborted by user.');
       } else {
         setError('An unknown error occurred while fetching logs.');
       }
     } finally {
       setIsLoading(false);
-      if (signal.aborted) {
-         slog.Debug('Log fetching process finished due to abort.');
-      }
+      // slog.Debug for abort is removed
     }
-  }, [agentId, containerId, since, tail, follow]);
+  }, [agentId, containerId, since, tail]); // follow is removed from dependencies
 
-  // Stop following when follow is toggled off
-  useEffect(() => {
-    if (!follow && abortControllerRef.current) {
-      abortControllerRef.current.abort();
-      setIsLoading(false); // Manually set loading to false as fetchLogs won't be called
-    }
-  }, [follow]);
-
+  // Effect for stopping follow when toggled off is removed
 
   return (
     <div className="p-4 md:p-6">
@@ -136,7 +89,7 @@ const LogViewer: React.FC = () => {
           <p className="text-sm text-muted-foreground">Agent: {agentId}</p>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 mb-6"> {/* Adjusted grid cols */}
             <div>
               <Label htmlFor="since">Since</Label>
               <Input id="since" value={since} onChange={(e) => setSince(e.target.value)} placeholder="e.g., 10m, 1h, YYYY-MM-DDTHH:MM:SS" />
@@ -145,15 +98,10 @@ const LogViewer: React.FC = () => {
               <Label htmlFor="tail">Tail</Label>
               <Input id="tail" value={tail} onChange={(e) => setTail(e.target.value)} placeholder="e.g., 100, all" />
             </div>
-            <div className="flex items-end">
-              <div className="flex items-center space-x-2">
-                <Switch id="follow" checked={follow} onCheckedChange={setFollow} />
-                <Label htmlFor="follow">Follow</Label>
-              </div>
-            </div>
+            {/* Follow Switch and Label removed */}
             <div className="flex items-end">
               <Button onClick={fetchLogs} disabled={isLoading || (!agentId || !containerId)}>
-                {isLoading ? (follow ? 'Following...' : 'Loading...') : 'Fetch Logs'}
+                {isLoading ? 'Loading...' : 'Fetch Logs'} {/* Simplified button text */}
               </Button>
             </div>
           </div>
@@ -174,13 +122,14 @@ const LogViewer: React.FC = () => {
   );
 };
 
-// A dummy slog object for browser environment if not available
-const slog = globalThis.slog || {
-  Debug: (...args: unknown[]) => console.debug(...args),
-  Info: (...args: unknown[]) => console.info(...args),
-  Warn: (...args: unknown[]) => console.warn(...args),
-  Error: (...args: unknown[]) => console.error(...args),
-};
+// slog usage was minimal and related to abort, can be removed or kept if other debug logs are added.
+// For now, let's remove the explicit slog object definition if not used elsewhere in this file.
+// const slog = globalThis.slog || {
+//   Debug: (...args: unknown[]) => console.debug(...args),
+//   Info: (...args: unknown[]) => console.info(...args),
+//   Warn: (...args: unknown[]) => console.warn(...args),
+//   Error: (...args: unknown[]) => console.error(...args),
+// };
 
 
 export default LogViewer;

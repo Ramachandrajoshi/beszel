@@ -37,8 +37,9 @@ import { useIntersectionObserver } from "@/lib/use-intersection-observer"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select"
 import { timeTicks } from "d3-time"
 import { useLingui } from "@lingui/react/macro"
-import { $router, navigate } from "../router"
+import { $router, navigate, Link } from "../router" // Added Link
 import { getPagePath } from "@nanostores/router"
+import { HardDriveIcon } from "../ui/icons" // Placeholder for Docker icon, replace if a better one exists
 
 const AreaChartDefault = lazy(() => import("../charts/area-chart"))
 const ContainerChart = lazy(() => import("../charts/container-chart"))
@@ -439,6 +440,22 @@ export default function SystemDetail({ name }: { name: string }) {
 						</div>
 						<div className="xl:ms-auto flex items-center gap-2 max-sm:-mb-1">
 							<ChartTimeSelect className="w-full xl:w-40" />
+							{/* Link to Docker Containers Page */}
+							<TooltipProvider delayDuration={100}>
+								<Tooltip>
+									<TooltipTrigger asChild>
+										<Button asChild variant="outline" size="icon" className="p-0 text-primary">
+											<Link
+												href={getPagePath($router, "agentDockerContainers", { agentId: system.id })}
+												aria-label={dockerOrPodman(t`View Docker Containers`, system)}
+											>
+												<HardDriveIcon className="h-[1.2rem] w-[1.2rem] opacity-85" />
+											</Link>
+										</Button>
+									</TooltipTrigger>
+									<TooltipContent>{dockerOrPodman(t`View Docker Containers`, system)}</TooltipContent>
+								</Tooltip>
+							</TooltipProvider>
 							<TooltipProvider delayDuration={100}>
 								<Tooltip>
 									<TooltipTrigger asChild>

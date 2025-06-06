@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"io"
 	"os"
 	"strings"
 	"sync"
@@ -334,4 +335,55 @@ func getDockerHost() string {
 		}
 	}
 	return scheme + socks[0]
+}
+
+// getContainerLogs returns a ReadCloser for the logs of a container.
+// It makes a GET request to the Docker API endpoint http://localhost/containers/{containerID}/logs.
+// Query parameters to include:
+//   stdout=true
+//   stderr=true
+//   since={since} (if since is not empty)
+//   tail={tail} (if tail is not empty)
+//   follow={follow}
+// The response body (which is an io.ReadCloser) should be returned directly.
+func (dm *dockerManager) getContainerLogs(containerID string, since string, tail string, follow bool) (io.ReadCloser, error) {
+	if dm.client == nil {
+		return nil, fmt.Errorf("docker client not initialized")
+	}
+
+	// Prepare query parameters
+	params := url.Values{}
+	params.Add("stdout", "true")
+	params.Add("stderr", "true")
+	params.Add("follow", fmt.Sprintf("%t", follow))
+
+	if since != "" {
+		params.Add("since", since)
+	}
+	if tail != "" {
+		params.Add("tail", tail)
+	}
+
+	// Construct the URL
+	// Assuming dm.client is configured to talk to "http://localhost" as a base,
+	// so we only need the path and query parameters.
+	requestURL := fmt.Sprintf("http://localhost/containers/%s/logs?%s", containerID, params.Encode())
+
+	req, err := http.NewRequest("GET", requestURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	resp, err := dm.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get container logs: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		// It's good practice to close the body if we're not returning it.
+		resp.Body.Close()
+		return nil, fmt.Errorf("failed to get container logs: status code %d", resp.StatusCode)
+	}
+
+	return resp.Body, nil
 }

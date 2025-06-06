@@ -5,6 +5,9 @@ const routes = {
 	system: `/system/:name`,
 	settings: `/settings/:name?`,
 	forgot_password: `/forgot-password`,
+	// Docker routes for agents
+	agentDockerContainers: "/agents/:agentId/docker",
+	agentDockerContainerLogs: "/agents/:agentId/docker/:containerId/logs",
 } as const
 
 /**

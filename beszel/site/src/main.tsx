@@ -11,6 +11,8 @@ import { useStore } from "@nanostores/react"
 import { Toaster } from "./components/ui/toaster.tsx"
 import { $router } from "./components/router.tsx"
 import SystemDetail from "./components/routes/system.tsx"
+import ContainerList from "./components/docker/ContainerList.tsx" // Added import
+import LogViewer from "./components/docker/LogViewer.tsx"     // Added import
 import Navbar from "./components/navbar.tsx"
 import { I18nProvider } from "@lingui/react"
 import { i18n } from "@lingui/core"
@@ -67,6 +69,10 @@ const App = memo(() => {
 		return <Home />
 	} else if (page.route === "system") {
 		return <SystemDetail name={page.params.name} />
+	} else if (page.route === "agentDockerContainers") { // Added route for ContainerList
+		return <ContainerList />
+	} else if (page.route === "agentDockerContainerLogs") { // Added route for LogViewer
+		return <LogViewer />
 	} else if (page.route === "settings") {
 		return (
 			<Suspense>

@@ -11,6 +11,7 @@ import (
 	"crypto/ed25519"
 	"encoding/pem"
 	"fmt"
+	"io"
 	"io/fs"
 	"net/http"
 	"net/http/httputil"
@@ -237,7 +238,118 @@ func (h *Hub) registerApiRoutes(se *core.ServeEvent) error {
 	if totalUsers, _ := h.CountRecords("users"); totalUsers == 0 {
 		se.Router.POST("/api/beszel/create-user", h.um.CreateFirstUser)
 	}
+
+	// Agent-specific Docker routes
+	se.Router.GET("/api/agent/:agentId/docker/containers", func(e *core.RequestEvent) error {
+		agentId := e.PathParam("agentId")
+		if agentId == "" {
+			return apis.NewBadRequestError("agentId is required", nil)
+		}
+
+		// Basic auth check (ensure user is authenticated)
+		// PocketBase collection rules should handle actual access permissions to the system record.
+		info, _ := e.RequestInfo()
+		if info.Auth == nil {
+			return apis.NewForbiddenError("Forbidden", nil)
+		}
+
+		system, ok := h.sm.Systems().GetOk(agentId)
+		if !ok || system == nil {
+			return apis.NewNotFoundError("Agent not found or not active", nil)
+		}
+
+		// It's good practice to ensure the system is 'up' before trying to command it for specific data.
+		// However, the requirements don't explicitly state this, so proceeding.
+		// Consider adding: if system.Status != systems.up { return apis.NewApiError(http.StatusServiceUnavailable, "Agent is not up", nil) }
+
+
+		// Placeholder command, replace with actual agent command
+		// The agent needs to be programmed to respond to this command with a JSON list of containers.
+		cmd := "agent_cli get-docker-containers"
+		output, err := system.ExecuteCommand(cmd)
+		if err != nil {
+			h.Logger().Error("Failed to get docker containers from agent", "agentId", agentId, "error", err)
+			return apis.NewApiError(http.StatusInternalServerError, fmt.Sprintf("Failed to execute command on agent: %v", err), nil)
+		}
+
+		e.Response.Header().Set("Content-Type", "application/json")
+		_, err = e.Response.Write(output)
+		return err
+	}, apis.RequireAdminOrRecordAuth("systems")) // Protect route: only admin or authed user linked to system
+
+	se.Router.GET("/api/agent/:agentId/docker/containers/:containerId/logs", func(e *core.RequestEvent) error {
+		agentId := e.PathParam("agentId")
+		containerId := e.PathParam("containerId")
+		if agentId == "" || containerId == "" {
+			return apis.NewBadRequestError("agentId and containerId are required", nil)
+		}
+
+		info, _ := e.RequestInfo()
+		if info.Auth == nil {
+			return apis.NewForbiddenError("Forbidden", nil)
+		}
+
+		system, ok := h.sm.Systems().GetOk(agentId)
+		if !ok || system == nil {
+			return apis.NewNotFoundError("Agent not found or not active", nil)
+		}
+
+		// Query parameters
+		since := e.QueryParam("since")
+		tail := e.QueryParam("tail")
+		follow := e.QueryParamBool("follow") // Default is false if not provided or parsing error
+
+		// Construct the command for the agent
+		// The agent needs to be programmed to handle this command and its parameters.
+		cmd := fmt.Sprintf("agent_cli get-docker-logs --id %s", containerId)
+		if since != "" {
+			cmd += fmt.Sprintf(" --since %s", shellEscape(since))
+		}
+		if tail != "" {
+			cmd += fmt.Sprintf(" --tail %s", shellEscape(tail))
+		}
+		if follow {
+			cmd += " --follow"
+		}
+
+		e.Response.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		// TODO: Consider adding "Transfer-Encoding: chunked" if appropriate for long-lived streams,
+		// though PocketBase/echo might handle this.
+
+		// Hijack the response writer for streaming if necessary, or just use e.Response directly
+		// For simplicity with PocketBase's core.RequestEvent, we'll try direct streaming.
+		// If `follow` is true, this connection could be long-lived.
+		// Ensure client and any proxies support this.
+
+		// Set a long timeout if following logs, otherwise use a shorter one.
+		// This is a conceptual timeout for the overall request from the hub's perspective.
+		// The underlying SSH session also has timeouts.
+		// PocketBase's default server timeouts might also apply.
+		// For true long-lived streaming, a more complex setup might be needed (e.g. WebSockets or dedicated stream handling)
+
+		err := system.StreamCommand(cmd, e.Response)
+		if err != nil {
+			// Don't write to response if headers already sent and stream started
+			// Check `e.Response.Committed` if available, or assume if err after stream it's too late.
+			// For now, log and potentially return an error if nothing has been written yet.
+			h.Logger().Error("Failed to stream docker logs from agent", "agentId", agentId, "containerId", containerId, "error", err)
+			// If headers not sent, can send an error
+			// if !e.Response.Committed { // Hypothetical check, PocketBase might not expose this directly
+			//	return apis.NewApiError(http.StatusInternalServerError, fmt.Sprintf("Failed to stream logs: %v", err), nil)
+			// }
+			// If streaming already started, error is returned to be logged by the framework
+			return fmt.Errorf("streaming error for %s/%s: %w", agentId, containerId, err)
+		}
+		return nil // Success
+	}, apis.RequireAdminOrRecordAuth("systems")) // Protect route
+
 	return nil
+}
+
+// shellEscape a string for safe inclusion in a shell command.
+// This is a basic version; a more robust one might be needed depending on agent's shell.
+func shellEscape(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }
 
 // generates key pair if it doesn't exist and returns signer

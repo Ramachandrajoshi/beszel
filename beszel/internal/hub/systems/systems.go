@@ -5,6 +5,7 @@ import (
 	"beszel/internal/entities/system"
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"strings"
 	"time"
@@ -439,6 +440,78 @@ func (sys *System) resetSSHClient() {
 	sys.client = nil
 }
 
+// ExecuteCommand executes a command on the remote system via SSH and returns its output.
+func (sys *System) ExecuteCommand(command string) ([]byte, error) {
+	if sys.client == nil || sys.Status == down {
+		if err := sys.createSSHClient(); err != nil {
+			return nil, fmt.Errorf("failed to create SSH client: %w", err)
+		}
+	}
+
+	session, err := sys.createSessionWithTimeout(sessionTimeout) // Use existing sessionTimeout
+	if err != nil {
+		// Attempt to reset and retry once if session creation fails
+		sys.manager.hub.Logger().Warn("SSH session creation failed, attempting to reset client and retry...", "host", sys.Host, "port", sys.Port, "err", err)
+		sys.resetSSHClient()
+		if errClient := sys.createSSHClient(); errClient != nil {
+			return nil, fmt.Errorf("failed to recreate SSH client after reset: %w", errClient)
+		}
+		session, err = sys.createSessionWithTimeout(sessionTimeout)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create SSH session after reset: %w", err)
+		}
+	}
+	defer session.Close()
+
+	output, err := session.Output(command)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute command '%s': %w", command, err)
+	}
+	return output, nil
+}
+
+// StreamCommand executes a command on the remote system via SSH and streams its stdout.
+func (sys *System) StreamCommand(command string, w io.Writer) error {
+	if sys.client == nil || sys.Status == down {
+		if err := sys.createSSHClient(); err != nil {
+			return fmt.Errorf("failed to create SSH client: %w", err)
+		}
+	}
+
+	session, err := sys.createSessionWithTimeout(sessionTimeout) // Use existing sessionTimeout
+	if err != nil {
+		// Attempt to reset and retry once if session creation fails
+		sys.manager.hub.Logger().Warn("SSH session creation failed, attempting to reset client and retry...", "host", sys.Host, "port", sys.Port, "err", err)
+		sys.resetSSHClient()
+		if errClient := sys.createSSHClient(); errClient != nil {
+			return fmt.Errorf("failed to recreate SSH client after reset: %w", errClient)
+		}
+		session, err = sys.createSessionWithTimeout(sessionTimeout)
+		if err != nil {
+			return fmt.Errorf("failed to create SSH session after reset: %w", err)
+		}
+	}
+	defer session.Close()
+
+	stdoutPipe, err := session.StdoutPipe()
+	if err != nil {
+		return fmt.Errorf("failed to get stdout pipe: %w", err)
+	}
+
+	if err := session.Start(command); err != nil {
+		return fmt.Errorf("failed to start command '%s': %w", command, err)
+	}
+
+	_, err = io.Copy(w, stdoutPipe)
+	if err != nil {
+		// session.Wait() might give a more specific error from the command execution itself
+		_ = session.Wait() // Best effort to get command error, but prioritize io.Copy error
+		return fmt.Errorf("failed to stream command output: %w", err)
+	}
+
+	return session.Wait() // Wait for the command to complete and get its exit status
+}
+
 // deactivateAlerts finds all triggered alerts for a system and sets them to false
 func deactivateAlerts(app core.App, systemID string) error {
 	// we can't use an UPDATE query because it doesn't work with realtime updates
@@ -454,4 +527,10 @@ func deactivateAlerts(app core.App, systemID string) error {
 		}
 	}
 	return nil
+}
+
+// Public accessor for the systems store, if needed by hub.go
+// Alternatively, SystemManager can have a GetSystem(id string) (*System, bool) method.
+func (sm *SystemManager) Systems() *store.Store[string, *System] {
+	return sm.systems
 }

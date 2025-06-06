@@ -4,6 +4,7 @@ import (
 	"beszel/internal/common"
 	"beszel/internal/entities/system"
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"strings"
@@ -25,6 +26,24 @@ const (
 
 	sessionTimeout = 4 * time.Second
 )
+
+// CommandRequest defines the structure for sending commands to the agent
+type CommandRequest struct {
+	Command string      `json:"command"`
+	Params  interface{} `json:"params"`
+}
+
+// LogParams defines the parameters for the "get_logs" command
+type LogParams struct {
+	ContainerID string `json:"container_id"`
+	Tail        int    `json:"tail"`
+}
+
+// CommandResponse defines the structure for responses from the agent
+type CommandResponse struct {
+	Data  map[string]string `json:"data"` // Specifically map[string]string for logs: {"logs": "..."}
+	Error string            `json:"error,omitempty"`
+}
 
 type SystemManager struct {
 	hub       hubLike
@@ -359,6 +378,84 @@ func (sys *System) fetchDataFromAgent() (*system.CombinedData, error) {
 
 	// this should never be reached due to the return in the loop
 	return nil, fmt.Errorf("failed to fetch data")
+}
+
+// fetchLogsFromAgent fetches logs for a specific container from the agent.
+func (sys *System) fetchLogsFromAgent(containerID string, tailLines int) (string, error) {
+	if sys.client == nil || sys.Status == down {
+		if err := sys.createSSHClient(); err != nil {
+			return "", fmt.Errorf("failed to create ssh client: %w", err)
+		}
+	}
+
+	session, err := sys.createSessionWithTimeout(sessionTimeout) // Use defined sessionTimeout
+	if err != nil {
+		// Consider resetting client like in fetchDataFromAgent if this becomes part of a retry loop
+		// sys.resetSSHClient()
+		return "", fmt.Errorf("failed to create ssh session: %w", err)
+	}
+	defer session.Close()
+
+	stdinPipe, err := session.StdinPipe()
+	if err != nil {
+		return "", fmt.Errorf("failed to get stdin pipe: %w", err)
+	}
+	stdoutPipe, err := session.StdoutPipe()
+	if err != nil {
+		return "", fmt.Errorf("failed to get stdout pipe: %w", err)
+	}
+
+	if err := session.Shell(); err != nil {
+		return "", fmt.Errorf("failed to start shell on remote agent: %w", err)
+	}
+
+	// Send command to agent
+	cmd := CommandRequest{
+		Command: "get_logs",
+		Params:  LogParams{ContainerID: containerID, Tail: tailLines},
+	}
+	if err := json.NewEncoder(stdinPipe).Encode(cmd); err != nil {
+		return "", fmt.Errorf("failed to send command to agent: %w", err)
+	}
+	// Close stdin to signal EOF to the agent
+	if err := stdinPipe.Close(); err != nil {
+		// Log this error but proceed to try and read response
+		sys.manager.hub.Logger().Error("Failed to close stdin pipe", "err", err, "system_id", sys.Id, "container_id", containerID)
+	}
+
+	// Receive response from agent
+	var response CommandResponse
+	// It's crucial to read from stdoutPipe before calling session.Wait()
+	// or do it in a separate goroutine.
+	// For simplicity, reading directly, assuming agent sends data then closes or session.Wait() handles.
+	if err := json.NewDecoder(stdoutPipe).Decode(&response); err != nil {
+		// Before returning this error, it's good practice to wait for the session to finish
+		// to clean up resources and get any exit error from the remote command.
+		waitErr := session.Wait()
+		sys.manager.hub.Logger().Error("Failed to decode response from agent or command failed", "decode_err", err, "wait_err", waitErr, "system_id", sys.Id, "container_id", containerID)
+		return "", fmt.Errorf("failed to decode response from agent (wait error: %v): %w", waitErr, err)
+	}
+
+	// Wait for the command to complete.
+	// If decoding succeeded, this primarily checks for non-zero exit status.
+	if err := session.Wait(); err != nil {
+		// If there was a response error string, that might be more specific.
+		if response.Error != "" {
+			return "", fmt.Errorf("agent error: %s (session wait error: %v)", response.Error, err)
+		}
+		return "", fmt.Errorf("command execution failed on agent (wait error): %w", err)
+	}
+
+	if response.Error != "" {
+		return "", fmt.Errorf("agent returned error: %s", response.Error)
+	}
+
+	logs, ok := response.Data["logs"]
+	if !ok {
+		return "", fmt.Errorf("agent response did not contain 'logs' field in data")
+	}
+
+	return logs, nil
 }
 
 // createSSHClientConfig initializes the ssh config for the system manager

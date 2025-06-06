@@ -39,6 +39,7 @@ import { timeTicks } from "d3-time"
 import { useLingui } from "@lingui/react/macro"
 import { $router, navigate } from "../router"
 import { getPagePath } from "@nanostores/router"
+import ContainerLogView from '../container-log-view';
 
 const AreaChartDefault = lazy(() => import("../charts/area-chart"))
 const ContainerChart = lazy(() => import("../charts/container-chart"))
@@ -123,6 +124,7 @@ export default function SystemDetail({ name }: { name: string }) {
 	const maxValues = useStore($maxValues)
 	const [grid, setGrid] = useLocalStorage("grid", true)
 	const [system, setSystem] = useState({} as SystemRecord)
+	const [selectedContainer, setSelectedContainer] = useState<{ id: string; name: string } | null>(null);
 	const [systemStats, setSystemStats] = useState([] as SystemStatsRecord[])
 	const [containerData, setContainerData] = useState([] as ChartData["containerData"])
 	const netCardRef = useRef<HTMLDivElement>(null)
@@ -662,11 +664,96 @@ export default function SystemDetail({ name }: { name: string }) {
 				)}
 			</div>
 
+			{/* Render the ContainerListCard after the main chart grid */}
+			<div className="grid gap-4 mt-4"> {/* Added mt-4 for spacing */}
+				<ContainerListCard
+					system={system}
+					chartTime={chartTime}
+					setSelectedContainer={setSelectedContainer}
+					t={t}
+					dockerOrPodmanFn={dockerOrPodman}
+				/>
+			</div>
+
 			{/* add space for tooltip if more than 12 containers */}
 			{bottomSpacing > 0 && <span className="block" style={{ height: bottomSpacing }} />}
+
+			{/* Container Logs Modal */}
+			{selectedContainer && (
+				<ContainerLogView
+					systemId={system.id}
+					containerId={selectedContainer.id}
+					containerName={selectedContainer.name}
+					onClose={() => setSelectedContainer(null)}
+				/>
+			)}
 		</>
 	)
 }
+
+// Helper component to render the actual list of containers
+const ContainerListCard = memo(({ system, chartTime, setSelectedContainer, t, dockerOrPodmanFn }: {
+	system: SystemRecord,
+	chartTime: ChartTimes,
+	setSelectedContainer: (container: { id: string; name: string } | null) => void,
+	t: any, // Lingui's t function
+	dockerOrPodmanFn: (str: string, sys: SystemRecord) => string
+}) => {
+	const latestContainerStatsForCard = useMemo(() => {
+		const cachedContainerStats = cache.get(`${system.id}_${chartTime}_container_stats`) as ContainerStatsRecord[] | undefined;
+		if (cachedContainerStats && cachedContainerStats.length > 0) {
+			const lastRecord = cachedContainerStats[cachedContainerStats.length - 1];
+			// Ensure lastRecord and its stats are valid
+			if (lastRecord && lastRecord.created && lastRecord.stats) {
+				return lastRecord.stats; // Array of { n: string, id?: string, c: number, m: number ... }
+			}
+		}
+		return [];
+	}, [system.id, chartTime, $systems]); // Using $systems as a proxy to re-evaluate if system data changes globally
+
+	if (!latestContainerStatsForCard || latestContainerStatsForCard.length === 0) {
+		return (
+			<Card>
+				<CardHeader>
+					<CardTitle>{dockerOrPodmanFn(t`Containers`, system)}</CardTitle>
+				</CardHeader>
+				<CardContent>
+					<p className="text-muted-foreground">{t`No container information available.`}</p>
+				</CardContent>
+			</Card>
+		);
+	}
+
+	return (
+		<Card>
+			<CardHeader>
+				<CardTitle>{dockerOrPodmanFn(t`Containers`, system)}</CardTitle>
+			</CardHeader>
+			<CardContent>
+				<ul className="divide-y">
+					{latestContainerStatsForCard.map(container => (
+						<li key={container.id || container.n} className="flex justify-between items-center py-3">
+							<span className="truncate" title={container.n}>
+								{container.n} ({container.id ? container.id.substring(0, 6) : t`N/A`})
+							</span>
+							<Button
+								size="sm"
+								onClick={() => setSelectedContainer({
+									// IMPORTANT: Using name as fallback if id is missing.
+									// Backend agent needs to ensure 'id' (short container ID) is part of ContainerStatsItem.
+									id: container.id || container.n,
+									name: container.n
+								})}
+							>
+								<Trans>View Logs</Trans>
+							</Button>
+						</li>
+					))}
+				</ul>
+			</CardContent>
+		</Card>
+	);
+});
 
 function FilterBar({ store = $containerFilter }: { store?: typeof $containerFilter }) {
 	const containerFilter = useStore(store)

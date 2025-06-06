@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -153,8 +154,16 @@ func (dm *dockerManager) updateContainerStats(ctr *container.ApiInfo) error {
 	// add empty values if they doesn't exist in map
 	stats, initialized := dm.containerStatsMap[ctr.IdShort]
 	if !initialized {
-		stats = &container.Stats{Name: name}
+		stats = &container.Stats{Name: name, Id: ctr.IdShort}
 		dm.containerStatsMap[ctr.IdShort] = stats
+	} else {
+		// Ensure ID is set even if stats object was already initialized (e.g. from a previous run before this change)
+		// Although, given the logic, if it's initialized, it should have been from the same ctr.IdShort.
+		// This is more of a safeguard or for completeness if the map could somehow persist across agent restarts
+		// without clearing (which is unlikely with current structure but good for robustness).
+		if stats.Id == "" {
+			stats.Id = ctr.IdShort
+		}
 	}
 
 	// reset current stats
@@ -334,4 +343,24 @@ func getDockerHost() string {
 		}
 	}
 	return scheme + socks[0]
+}
+
+func (dm *dockerManager) GetContainerLogs(containerID string, tailLines int) (string, error) {
+	url := fmt.Sprintf("http://localhost/containers/%s/logs?stdout=true&stderr=true&tail=%d&timestamps=true", containerID, tailLines)
+	resp, err := dm.client.Get(url)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("failed to get container logs: status code %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+
+	return string(body), nil
 }

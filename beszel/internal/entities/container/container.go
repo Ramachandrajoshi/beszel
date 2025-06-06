@@ -99,6 +99,7 @@ type prevNetStats struct {
 
 // Docker container stats
 type Stats struct {
+	Id          string       `json:"id,omitempty"`
 	Name        string       `json:"n"`
 	Cpu         float64      `json:"c"`
 	Mem         float64      `json:"m"`

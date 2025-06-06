@@ -17,6 +17,7 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"strconv"
 	"strings"
 
 	"github.com/pocketbase/pocketbase"
@@ -237,7 +238,47 @@ func (h *Hub) registerApiRoutes(se *core.ServeEvent) error {
 	if totalUsers, _ := h.CountRecords("users"); totalUsers == 0 {
 		se.Router.POST("/api/beszel/create-user", h.um.CreateFirstUser)
 	}
+	// endpoint to get container logs
+	se.Router.GET("/api/beszel/container_logs", h.handleGetContainerLogs, apis.RequireRecordAuth("users"))
 	return nil
+}
+
+func (h *Hub) handleGetContainerLogs(e *core.RequestEvent) error {
+	systemID := e.QueryParam("system_id")
+	containerID := e.QueryParam("container_id")
+	tailStr := e.QueryParam("tail")
+
+	if systemID == "" || containerID == "" {
+		return apis.NewBadRequestError("system_id and container_id query parameters are required", nil)
+	}
+
+	tailLinesInt := 100 // Default value
+	if tailStr != "" {
+		var err error
+		tailLinesInt, err = strconv.Atoi(tailStr)
+		if err != nil || tailLinesInt <= 0 {
+			// You might want to log this minor error or inform the user about invalid tail value
+			h.Logger().Debug("Invalid tail parameter, defaulting to 100", "tail_param", tailStr, "error", err)
+			tailLinesInt = 100
+		}
+	}
+
+	system, ok := h.sm.Systems().GetOk(systemID) // Assuming SystemManager has a Systems() method that returns the store
+	if !ok || system == nil {
+		return apis.NewNotFoundError(fmt.Sprintf("System with ID '%s' not found or is not active", systemID), nil)
+	}
+
+	logs, err := system.FetchLogsFromAgent(containerID, tailLinesInt) // Assumes System struct has FetchLogsFromAgent
+	if err != nil {
+		h.Logger().Error("Failed to fetch container logs from agent",
+			"system_id", systemID,
+			"container_id", containerID,
+			"tail", tailLinesInt,
+			"error", err.Error()) // Log the error string
+		return apis.NewApiError(http.StatusInternalServerError, fmt.Sprintf("Failed to fetch logs: %v", err), nil)
+	}
+
+	return e.JSON(http.StatusOK, map[string]string{"logs": logs})
 }
 
 // generates key pair if it doesn't exist and returns signer
